@@ -105,7 +105,7 @@ impl GapBuffer {
 
         for (i, &byte) in self.after.iter().enumerate() {
             if byte == b'\n' {
-                if current_line == line_num {
+                if current_line == line_num && after_start <= i {
                     return String::from_utf8_lossy(&self.after[after_start..i]).to_string();
                 }
                 current_line += 1;
