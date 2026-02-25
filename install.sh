@@ -118,6 +118,24 @@ compile_from_source() {
         exit 1
     fi
     
+    if [ -f "$HOME/.cargo/env" ]; then
+        source "$HOME/.cargo/env"
+    fi
+    
+    print_status "Configuring cargo network settings..."
+    mkdir -p "$HOME/.cargo"
+    cat > "$HOME/.cargo/config.toml" << 'CARGOEOF'
+[net]
+retry = 5
+git-fetch-with-cli = true
+
+[http]
+timeout = 300
+
+[registries.crates-io]
+protocol = "sparse"
+CARGOEOF
+    
     print_status "Installing build dependencies..."
     if [ "$os" = "termux" ]; then
         pkg install -y clang 2>/dev/null || true
@@ -142,7 +160,7 @@ compile_from_source() {
         rm -rf "$TEMP_DIR"
         exit 1
     fi
-
+    
     if [ -f "$HOME/.cargo/env" ]; then
         source "$HOME/.cargo/env"
     fi
