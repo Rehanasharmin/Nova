@@ -1,0 +1,1 @@
+/root/nova/target/release/nova: /root/nova/src/buffer/buffer.rs /root/nova/src/buffer/mod.rs /root/nova/src/config/mod.rs /root/nova/src/config/settings.rs /root/nova/src/main.rs /root/nova/src/ui/mod.rs /root/nova/src/ui/theme.rs /root/nova/src/ui/widgets.rs

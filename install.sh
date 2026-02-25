@@ -102,11 +102,21 @@ print_status "Fetching latest release info..."
 VERSION_DATA=$(curl -s "$VERSION_URL")
 
 if [ $? -ne 0 ]; then
-    print_error "Failed to fetch release info. Check your internet connection."
-    exit 1
+    print_error "Failed to fetch release info. Trying alternative..."
 fi
 
-DOWNLOAD_URL=$(echo "$VERSION_DATA" | grep -o "browser_download_url.*nova-${os}-${arch}[^\"]*" | head -1 | sed 's/browser_download_url.*"//' | tr -d '"')
+DOWNLOAD_URL=""
+if [ -n "$VERSION_DATA" ]; then
+    DOWNLOAD_URL=$(echo "$VERSION_DATA" | grep -o "browser_download_url.*nova-${os}-${arch}[^\"]*" | head -1 | sed 's/browser_download_url.*"//' | tr -d '"')
+fi
+
+# If no release binary, download from repo
+if [ -z "$DOWNLOAD_URL" ]; then
+    DOWNLOAD_URL="https://raw.githubusercontent.com/${GITHUB_REPO}/main/target/release/nova"
+    FILENAME="nova"
+else
+    FILENAME=$(basename "$DOWNLOAD_URL")
+fi
 
 if [ "$os" = "termux" ]; then
     INSTALL_DIR="$PREFIX/bin"
@@ -114,58 +124,40 @@ fi
 
 mkdir -p "$INSTALL_DIR"
 
-if [ -z "$DOWNLOAD_URL" ]; then
-    print_warning "No pre-built binary for $os-$arch"
-    echo ""
-    read -p "Compile from source instead? [y/N] " -n 1 -r
-    echo ""
-    if [[ $REPLY =~ ^[Yy]$ ]]; then
-        print_status "Installing build dependencies..."
-        if [ "$os" = "termux" ]; then
-            pkg install -y rust clang make
-        else
-            if command -v apt &> /dev/null; then
-                sudo apt install -y rustc cargo clang
-            elif command -v pacman &> /dev/null; then
-                sudo pacman -S --noconfirm rust clang
-            elif command -v dnf &> /dev/null; then
-                sudo dnf install -y rust clang
-            fi
-        fi
-        print_status "Building nova (this may take a few minutes)..."
-        TEMP_DIR=$(mktemp -d)
-        git clone --depth 1 "https://github.com/${GITHUB_REPO}.git" "$TEMP_DIR/nova" 2>/dev/null || \
-        curl -sL "https://github.com/${GITHUB_REPO}/archive/refs/heads/main.zip" -o "/tmp/nova.zip" && \
-        unzip -q "/tmp/nova.zip" -d /tmp && TEMP_DIR="/tmp/nova-main"
-        cd "$TEMP_DIR"
-        cargo build --release 2>/dev/null
-        if [ -f "$TEMP_DIR/target/release/nova" ]; then
-            cp "$TEMP_DIR/target/release/nova" "$INSTALL_DIR/nova"
-            chmod +x "$INSTALL_DIR/nova"
-            print_success "Binary installed to $INSTALL_DIR/nova"
-        else
-            print_error "Build failed"
-            exit 1
-        fi
-        rm -rf "$TEMP_DIR" "/tmp/nova.zip" 2>/dev/null
-    else
-        print_error "Installation cancelled"
-        exit 0
-    fi
+print_status "Downloading nova..."
+
+if [[ "$DOWNLOAD_URL" == *"raw.githubusercontent.com"* ]]; then
+    curl -sL "$DOWNLOAD_URL" -o "$INSTALL_DIR/nova"
 else
-    print_status "Downloading: $FILENAME"
     (
         curl -sL --progress-bar "$DOWNLOAD_URL" -o "$INSTALL_DIR/nova"
-        chmod +x "$INSTALL_DIR/nova"
     ) &
-    spinner $! "Installing nova"
+    spinner $! "Downloading nova"
+fi
 
-    if [ -f "$INSTALL_DIR/nova" ]; then
-        print_success "Binary installed to $INSTALL_DIR/nova"
+chmod +x "$INSTALL_DIR/nova"
+
+if [ -f "$INSTALL_DIR/nova" ]; then
+    print_success "Binary installed to $INSTALL_DIR/nova"
+else
+    print_error "Download failed"
+    print_warning "Trying to compile from source..."
+    if [ "$os" = "termux" ]; then
+        pkg install -y rust clang 2>/dev/null || true
+    fi
+    TEMP_DIR=$(mktemp -d)
+    git clone --depth 1 "https://github.com/${GITHUB_REPO}.git" "$TEMP_DIR/nova" 2>/dev/null
+    cd "$TEMP_DIR/nova"
+    cargo build --release 2>/dev/null
+    if [ -f "$TEMP_DIR/nova/target/release/nova" ]; then
+        cp "$TEMP_DIR/nova/target/release/nova" "$INSTALL_DIR/nova"
+        chmod +x "$INSTALL_DIR/nova"
+        print_success "Compiled and installed!"
     else
-        print_error "Download failed"
+        print_error "Build failed"
         exit 1
     fi
+    rm -rf "$TEMP_DIR"
 fi
 
 mkdir -p "$CONFIG_DIR"

@@ -1,0 +1,12 @@
+/root/nova/target/release/deps/ratatui_macros-1d81443a24beb3f8.d: /root/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/ratatui-macros-0.7.0/src/lib.rs /root/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/ratatui-macros-0.7.0/src/layout.rs /root/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/ratatui-macros-0.7.0/src/line.rs /root/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/ratatui-macros-0.7.0/src/row.rs /root/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/ratatui-macros-0.7.0/src/span.rs /root/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/ratatui-macros-0.7.0/src/text.rs
+
+/root/nova/target/release/deps/libratatui_macros-1d81443a24beb3f8.rlib: /root/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/ratatui-macros-0.7.0/src/lib.rs /root/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/ratatui-macros-0.7.0/src/layout.rs /root/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/ratatui-macros-0.7.0/src/line.rs /root/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/ratatui-macros-0.7.0/src/row.rs /root/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/ratatui-macros-0.7.0/src/span.rs /root/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/ratatui-macros-0.7.0/src/text.rs
+
+/root/nova/target/release/deps/libratatui_macros-1d81443a24beb3f8.rmeta: /root/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/ratatui-macros-0.7.0/src/lib.rs /root/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/ratatui-macros-0.7.0/src/layout.rs /root/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/ratatui-macros-0.7.0/src/line.rs /root/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/ratatui-macros-0.7.0/src/row.rs /root/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/ratatui-macros-0.7.0/src/span.rs /root/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/ratatui-macros-0.7.0/src/text.rs
+
+/root/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/ratatui-macros-0.7.0/src/lib.rs:
+/root/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/ratatui-macros-0.7.0/src/layout.rs:
+/root/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/ratatui-macros-0.7.0/src/line.rs:
+/root/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/ratatui-macros-0.7.0/src/row.rs:
+/root/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/ratatui-macros-0.7.0/src/span.rs:
+/root/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/ratatui-macros-0.7.0/src/text.rs:
