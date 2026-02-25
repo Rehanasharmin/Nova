@@ -1,4 +1,4 @@
-target/debug
+target/
 *.swp
 *.swo
 *~

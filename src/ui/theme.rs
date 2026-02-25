@@ -5,6 +5,7 @@ pub struct Theme {
     pub name: String,
     pub background: Color,
     pub foreground: Color,
+    #[allow(dead_code)]
     pub selection: Color,
     pub cursor: Color,
     pub cursor_line: Color,

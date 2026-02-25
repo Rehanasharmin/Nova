@@ -63,14 +63,6 @@ impl Buffer {
         self.lines.get(line).map(|l| l.len()).unwrap_or(0)
     }
 
-    pub fn num_lines(&self) -> usize {
-        self.lines.len()
-    }
-
-    pub fn get_line(&self, line: usize) -> String {
-        self.lines.get(line).cloned().unwrap_or_default()
-    }
-
     pub fn save(&mut self) -> std::io::Result<()> {
         if let Some(ref path) = self.path {
             let content = self.lines.join("\n");

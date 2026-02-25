@@ -107,12 +107,21 @@ fi
 
 DOWNLOAD_URL=""
 if [ -n "$VERSION_DATA" ]; then
-    DOWNLOAD_URL=$(echo "$VERSION_DATA" | grep -o "browser_download_url.*nova-${os}-${arch}[^\"]*" | head -1 | sed 's/browser_download_url.*"//' | tr -d '"')
+    # Use linux binary for termux since they're compatible
+    if [ "$os" = "termux" ]; then
+        DOWNLOAD_URL=$(echo "$VERSION_DATA" | grep -o "browser_download_url.*nova-linux-${arch}[^\"]*" | head -1 | sed 's/browser_download_url.*"//' | tr -d '"')
+    else
+        DOWNLOAD_URL=$(echo "$VERSION_DATA" | grep -o "browser_download_url.*nova-${os}-${arch}[^\"]*" | head -1 | sed 's/browser_download_url.*"//' | tr -d '"')
+    fi
 fi
 
 # If no release binary, download from repo
 if [ -z "$DOWNLOAD_URL" ]; then
-    DOWNLOAD_URL="https://raw.githubusercontent.com/${GITHUB_REPO}/main/target/release/nova"
+    if [ "$os" = "termux" ]; then
+        DOWNLOAD_URL="https://raw.githubusercontent.com/${GITHUB_REPO}/main/target/release/nova"
+    else
+        DOWNLOAD_URL="https://raw.githubusercontent.com/${GITHUB_REPO}/main/target/release/nova"
+    fi
     FILENAME="nova"
 else
     FILENAME=$(basename "$DOWNLOAD_URL")
