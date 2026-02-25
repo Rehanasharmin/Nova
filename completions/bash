@@ -1,0 +1,33 @@
+_nova_completion() {
+    local cur prev words cword
+    _init_completion || return
+
+    local -a opts=(
+        "-h:Show help"
+        "--help:Show help"
+        "-v:Show version"
+        "--version:Show version"
+        "-c:Number of columns"
+        "--columns:Number of columns"
+        "-r:Number of rows"
+        "--rows:Number of rows"
+        "-w:Width"
+        "--width:Width"
+        "-t:Title"
+        "--title:Title"
+    )
+
+    case "$prev" in
+        -c|--columns|-r|--rows|-w|--width|-t|--title)
+            return
+            ;;
+        -*)
+            COMPREPLY=($(compgen -W "${opts[*]}" -- "$cur"))
+            return
+            ;;
+    esac
+
+    _filedir
+}
+
+complete -F _nova_completion nova

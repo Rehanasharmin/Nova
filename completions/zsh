@@ -1,0 +1,20 @@
+#compdef nova
+
+local -a opts
+opts=(
+    '-h[Show help]'
+    '--help[Show help]'
+    '-v[Show version]'
+    '--version[Show version]'
+    '-c[Number of columns]::columns:'
+    '--columns[Number of columns]::columns:'
+    '-r[Number of rows]::rows:'
+    '--rows[Number of rows]::rows:'
+    '-w[Width]::width:'
+    '--width[Width]::width:'
+    '-t[Title]::title:'
+    '--title[Title]::title:'
+    '*:file:_files'
+)
+
+_arguments -s $opts
