@@ -90,20 +90,48 @@ detect_extension() {
 }
 
 compile_from_source() {
+    print_status "Checking for Rust..."
+    
+    if command -v cargo &> /dev/null; then
+        print_status "Rust already installed"
+    else
+        print_status "Installing Rust..."
+        if [ "$os" = "termux" ]; then
+            pkg install -y rust clang 2>/dev/null || true
+        elif [ "$os" = "linux" ]; then
+            if command -v curl &> /dev/null; then
+                curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y 2>/dev/null || true
+                if [ -f "$HOME/.cargo/env" ]; then
+                    source "$HOME/.cargo/env"
+                fi
+            fi
+        elif [ "$os" = "macos" ]; then
+            if command -v brew &> /dev/null; then
+                brew install rustup 2>/dev/null || true
+                rustup default stable 2>/dev/null || true
+            fi
+        fi
+    fi
+    
+    if ! command -v cargo &> /dev/null; then
+        print_error "Failed to install Rust. Please install manually: https://rustup.rs"
+        exit 1
+    fi
+    
     print_status "Installing build dependencies..."
     if [ "$os" = "termux" ]; then
-        pkg install -y rust clang 2>/dev/null || true
+        pkg install -y clang 2>/dev/null || true
     elif [ "$os" = "linux" ]; then
         if command -v apt-get &> /dev/null; then
-            sudo apt-get update && sudo apt-get install -y rust cargo clang 2>/dev/null || true
+            sudo apt-get install -y clang 2>/dev/null || true
         elif command -v dnf &> /dev/null; then
-            sudo dnf install -y rust cargo clang 2>/dev/null || true
+            sudo dnf install -y clang 2>/dev/null || true
         elif command -v pacman &> /dev/null; then
-            sudo pacman -S --noconfirm rust clang 2>/dev/null || true
+            sudo pacman -S --noconfirm clang 2>/dev/null || true
         fi
     elif [ "$os" = "macos" ]; then
         if command -v brew &> /dev/null; then
-            brew install rust clang 2>/dev/null || true
+            brew install clang 2>/dev/null || true
         fi
     fi
 
@@ -115,10 +143,15 @@ compile_from_source() {
         exit 1
     fi
 
+    if [ -f "$HOME/.cargo/env" ]; then
+        source "$HOME/.cargo/env"
+    fi
+    
     print_status "Building nova (this may take a few minutes)..."
     cd "$TEMP_DIR/nova"
     if ! cargo build --release 2>&1; then
-        print_error "Build failed"
+        print_error "Build failed. Error output:"
+        cargo build --release 2>&1 | tail -20
         rm -rf "$TEMP_DIR"
         exit 1
     fi
