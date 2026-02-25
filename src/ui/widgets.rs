@@ -4,27 +4,34 @@ use ratatui::{
 };
 
 use super::Theme;
+use crate::buffer::Buffer;
 
 pub struct EditorView {
-    pub lines: Vec<String>,
+    pub buffer: Buffer,
     pub cursor_line: usize,
     pub cursor_col: usize,
     pub show_line_numbers: bool,
     pub scroll_offset: usize,
     pub theme: Theme,
     pub cursor_blink_on: bool,
+    #[allow(dead_code)]
+    pub word_wrap: bool,
+    #[allow(dead_code)]
+    pub width: u16,
 }
 
 impl EditorView {
     pub fn new() -> Self {
         Self {
-            lines: vec![String::new()],
+            buffer: Buffer::new(),
             cursor_line: 0,
             cursor_col: 0,
             show_line_numbers: true,
             scroll_offset: 0,
             theme: Theme::monokai_pro(),
             cursor_blink_on: true,
+            word_wrap: false,
+            width: 80,
         }
     }
 }
@@ -51,7 +58,7 @@ impl Widget for EditorView {
             return;
         }
 
-        let line_count = self.lines.len();
+        let line_count = self.buffer.num_lines();
         let line_number_width = if self.show_line_numbers && line_count > 0 {
             (line_count.to_string().len() + 3).max(5) as u16
         } else {
@@ -77,11 +84,11 @@ impl Widget for EditorView {
         for y in 0..visible_lines {
             let line_idx = self.scroll_offset + y;
 
-            if line_idx >= self.lines.len() {
+            if line_idx >= line_count {
                 break;
             }
 
-            let line_text = self.lines.get(line_idx).cloned().unwrap_or_default();
+            let line_text = self.buffer.get_line(line_idx);
             let is_current_line = line_idx == self.cursor_line;
 
             // Render line number with separator
@@ -189,7 +196,7 @@ impl Widget for EditorView {
             }
 
             // Draw vertical border on right
-            if line_idx < self.lines.len() {
+            if line_idx < line_count {
                 let right_x = inner.x + inner.width - 1;
                 buf[(right_x, pos_y)]
                     .set_char('│')
@@ -198,9 +205,9 @@ impl Widget for EditorView {
         }
 
         // Render scrollbar
-        if self.lines.len() > visible_lines {
+        if line_count > visible_lines {
             let scrollbar_height = inner.height as f64;
-            let total_lines = self.lines.len();
+            let total_lines = line_count;
             let scroll_ratio = (self.scroll_offset as f64 / total_lines as f64) * scrollbar_height;
             let thumb_size =
                 ((visible_lines as f64 / total_lines as f64) * scrollbar_height).max(1.0) as u16;

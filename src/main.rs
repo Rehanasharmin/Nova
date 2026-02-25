@@ -2,7 +2,9 @@ use std::io::{self, stdout};
 
 use crossterm::{
     event::{self, Event, KeyCode, KeyEventKind, KeyModifiers},
-    terminal::{disable_raw_mode, enable_raw_mode, EnterAlternateScreen, LeaveAlternateScreen},
+    terminal::{
+        disable_raw_mode, enable_raw_mode, size, EnterAlternateScreen, LeaveAlternateScreen,
+    },
     ExecutableCommand,
 };
 use ratatui::{
@@ -21,17 +23,24 @@ mod buffer;
 mod config;
 mod ui;
 
-#[derive(Clone)]
+#[derive(Clone, Debug)]
 enum EditOp {
     Insert {
-        line: usize,
-        col: usize,
+        pos: usize,
         text: String,
     },
     Delete {
-        line: usize,
-        col: usize,
+        pos: usize,
         text: String,
+    },
+    #[allow(dead_code)]
+    Replace {
+        pos: usize,
+        #[allow(dead_code)]
+        old_len: usize,
+        #[allow(dead_code)]
+        old_text: String,
+        new_text: String,
     },
 }
 
@@ -47,6 +56,7 @@ impl UndoHistory {
             pos: 0,
         }
     }
+
     fn push(&mut self, op: EditOp) {
         self.ops.truncate(self.pos);
         self.ops.push(op);
@@ -56,70 +66,84 @@ impl UndoHistory {
             self.pos -= 1;
         }
     }
+
     fn undo(&mut self, buffer: &mut Buffer) -> bool {
         if self.pos == 0 {
             return false;
         }
         self.pos -= 1;
         match &self.ops[self.pos] {
-            EditOp::Insert { line, col, text } => {
-                if *line < buffer.lines.len() {
-                    let ls = &mut buffer.lines[*line];
-                    if *col <= ls.len() {
-                        ls.drain(*col..(*col + text.len()).min(ls.len()));
-                    }
-                }
-                buffer.is_modified = true;
+            EditOp::Insert { pos, text } => {
+                buffer.delete(*pos, text.len());
                 true
             }
-            EditOp::Delete { line, col, text } => {
-                if *line < buffer.lines.len() {
-                    buffer.lines[*line].insert_str(*col, text);
-                }
-                buffer.is_modified = true;
+            EditOp::Delete { pos, text } => {
+                buffer.insert(*pos, text);
+                true
+            }
+            EditOp::Replace {
+                pos,
+                old_len: _,
+                old_text,
+                new_text,
+            } => {
+                buffer.delete(*pos, new_text.len());
+                buffer.insert(*pos, old_text);
                 true
             }
         }
     }
+
     fn redo(&mut self, buffer: &mut Buffer) -> bool {
         if self.pos >= self.ops.len() {
             return false;
         }
         match &self.ops[self.pos] {
-            EditOp::Insert { line, col, text } => {
-                if *line < buffer.lines.len() {
-                    buffer.lines[*line].insert_str(*col, text);
-                }
-                buffer.is_modified = true;
+            EditOp::Insert { pos, text } => {
+                buffer.insert(*pos, text);
                 self.pos += 1;
                 true
             }
-            EditOp::Delete { line, col, text } => {
-                if *line < buffer.lines.len() {
-                    let ls = &mut buffer.lines[*line];
-                    if *col < ls.len() {
-                        ls.drain(*col..(*col + text.len()).min(ls.len()));
-                    }
-                }
-                buffer.is_modified = true;
+            EditOp::Delete { pos, text } => {
+                buffer.delete(*pos, text.len());
+                self.pos += 1;
+                true
+            }
+            EditOp::Replace {
+                pos,
+                old_len: _,
+                old_text: _,
+                new_text,
+            } => {
+                buffer.insert(*pos, new_text);
                 self.pos += 1;
                 true
             }
         }
     }
+
     fn clear(&mut self) {
         self.ops.clear();
         self.pos = 0;
     }
 }
 
+#[derive(Clone, PartialEq)]
 enum EditorMode {
     Normal,
     Search {
         query: String,
-        results: Vec<(usize, usize)>,
-        result_idx: usize,
+        case_sensitive: bool,
+        backward: bool,
     },
+    Replace {
+        search: String,
+        replace: String,
+        case_sensitive: bool,
+        all: bool,
+        confirmed: bool,
+    },
+    GoToLine,
     Confirm {
         title: String,
         message: String,
@@ -129,6 +153,7 @@ enum EditorMode {
     Input {
         title: String,
         input: String,
+        history: Vec<String>,
     },
 }
 
@@ -137,6 +162,7 @@ enum PendingAction {
     SaveAndQuit,
     QuitWithoutSave,
     SaveAs(String),
+    ReplaceAll(String, String),
 }
 
 struct Editor {
@@ -148,6 +174,7 @@ struct Editor {
     theme: Theme,
     show_help: bool,
     show_line_numbers: bool,
+    word_wrap: bool,
     should_quit: bool,
     undo: UndoHistory,
     mode: EditorMode,
@@ -155,10 +182,12 @@ struct Editor {
     quit_after_save: bool,
     cursor_blink_on: bool,
     last_cursor_time: std::time::Instant,
+    screen_width: usize,
+    screen_height: usize,
 }
 
 impl Editor {
-    fn new(initial_file: Option<String>) -> Self {
+    fn new(initial_file: Option<String>, width: usize, height: usize) -> Self {
         let settings = Settings::load();
         let theme = Theme::get_theme(&settings.theme);
 
@@ -182,6 +211,7 @@ impl Editor {
             theme,
             show_help: true,
             show_line_numbers: true,
+            word_wrap: false,
             should_quit: false,
             undo: UndoHistory::new(),
             mode: EditorMode::Normal,
@@ -189,19 +219,22 @@ impl Editor {
             quit_after_save: false,
             cursor_blink_on: true,
             last_cursor_time: std::time::Instant::now(),
+            screen_width: width,
+            screen_height: height,
         }
     }
 
     fn update_scroll(&mut self) {
-        let v = 20usize;
+        let view_height = self.screen_height.saturating_sub(3);
         if self.cursor_line < self.scroll_offset {
             self.scroll_offset = self.cursor_line;
         }
-        if self.cursor_line >= self.scroll_offset + v {
-            self.scroll_offset = self.cursor_line.saturating_sub(v - 1);
+        if self.cursor_line >= self.scroll_offset + view_height {
+            self.scroll_offset = self.cursor_line.saturating_sub(view_height - 1);
         }
-        if self.scroll_offset + v > self.buffer.lines.len() {
-            self.scroll_offset = self.buffer.lines.len().saturating_sub(v);
+        let max_scroll = self.buffer.num_lines().saturating_sub(view_height);
+        if self.scroll_offset > max_scroll {
+            self.scroll_offset = max_scroll;
         }
     }
 
@@ -214,10 +247,24 @@ impl Editor {
     }
 
     fn clamp_cursor(&mut self) {
-        self.cursor_line = self
-            .cursor_line
-            .min(self.buffer.lines.len().saturating_sub(1));
+        let num_lines = self.buffer.num_lines().saturating_sub(1);
+        self.cursor_line = self.cursor_line.min(num_lines);
         self.cursor_col = self.cursor_col.min(self.buffer.line_len(self.cursor_line));
+    }
+
+    fn get_indent(&self, line: usize) -> String {
+        let line_content = self.buffer.get_line(line);
+        let mut indent = String::new();
+        for ch in line_content.chars() {
+            if ch == ' ' {
+                indent.push(' ');
+            } else if ch == '\t' {
+                indent.push('\t');
+            } else {
+                break;
+            }
+        }
+        indent
     }
 
     fn handle_key(&mut self, key: &event::KeyEvent) {
@@ -233,19 +280,59 @@ impl Editor {
             }
             EditorMode::Search {
                 query,
-                results,
-                result_idx,
+                case_sensitive,
+                backward,
             } => {
-                let (new_query, new_results, new_result_idx, should_exit) =
-                    self.handle_search_owned(key, query, results, result_idx);
+                let (new_query, new_case, new_backward, should_exit) =
+                    self.handle_search_owned(key, query, case_sensitive, backward);
                 if should_exit {
                     self.mode = EditorMode::Normal;
                 } else {
                     self.mode = EditorMode::Search {
                         query: new_query,
-                        results: new_results,
-                        result_idx: new_result_idx,
+                        case_sensitive: new_case,
+                        backward: new_backward,
                     };
+                }
+            }
+            EditorMode::Replace {
+                search,
+                replace,
+                case_sensitive,
+                all,
+                confirmed,
+            } => {
+                let (
+                    new_search,
+                    new_replace,
+                    new_case,
+                    new_all,
+                    new_confirmed,
+                    action,
+                    should_exit,
+                ) = self.handle_replace_owned(key, search, replace, case_sensitive, all, confirmed);
+                if let Some(act) = action {
+                    self.pending_action = Some(act);
+                }
+                if should_exit {
+                    self.mode = EditorMode::Normal;
+                } else {
+                    self.mode = EditorMode::Replace {
+                        search: new_search,
+                        replace: new_replace,
+                        case_sensitive: new_case,
+                        all: new_all,
+                        confirmed: new_confirmed,
+                    };
+                }
+            }
+            EditorMode::GoToLine => {
+                let (line_num, should_exit) = self.handle_goto_owned(key);
+                if should_exit {
+                    self.mode = EditorMode::Normal;
+                } else if let Some(num) = line_num {
+                    self.goto_line(num);
+                    self.mode = EditorMode::Normal;
                 }
             }
             EditorMode::Confirm {
@@ -261,12 +348,12 @@ impl Editor {
                 if let Some(act) = &action {
                     self.pending_action = Some(act.clone());
                 }
-                // If action is None and Enter was pressed on "Yes", we need Input mode for save-as
                 if action.is_none() && key.code == KeyCode::Enter && is_yes_selected {
                     self.quit_after_save = true;
                     self.mode = EditorMode::Input {
                         title: "Save As".into(),
                         input: "untitled.txt".into(),
+                        history: Vec::new(),
                     };
                 } else if key.code == KeyCode::Enter {
                     self.mode = EditorMode::Normal;
@@ -281,8 +368,13 @@ impl Editor {
                     };
                 }
             }
-            EditorMode::Input { title, input } => {
-                let (new_title, new_input, action) = self.handle_input_owned(key, title, input);
+            EditorMode::Input {
+                title,
+                input,
+                history,
+            } => {
+                let (new_title, new_input, new_history, action) =
+                    self.handle_input_owned(key, title, input, history);
                 if let Some(act) = action {
                     self.pending_action = Some(act);
                 }
@@ -290,6 +382,7 @@ impl Editor {
                     self.mode = EditorMode::Input {
                         title: new_title,
                         input: new_input,
+                        history: new_history,
                     };
                 } else {
                     self.mode = EditorMode::Normal;
@@ -315,7 +408,21 @@ impl Editor {
                         self.quit_after_save = false;
                     }
                 }
+                PendingAction::ReplaceAll(search, replace) => {
+                    let _count = self.buffer.replace(&search, &replace);
+                    self.undo.clear();
+                }
             }
+        }
+    }
+
+    fn goto_line(&mut self, line_num: usize) {
+        let num_lines = self.buffer.num_lines();
+        if line_num > 0 && line_num <= num_lines {
+            self.cursor_line = line_num - 1;
+            self.cursor_col = 0;
+            self.clamp_cursor();
+            self.update_scroll();
         }
     }
 
@@ -330,6 +437,7 @@ impl Editor {
                     self.mode = EditorMode::Input {
                         title: "Save As".into(),
                         input: "untitled.txt".into(),
+                        history: Vec::new(),
                     };
                 } else if self.buffer.is_modified {
                     self.mode = EditorMode::Confirm {
@@ -347,6 +455,7 @@ impl Editor {
                     self.mode = EditorMode::Input {
                         title: "Save As".into(),
                         input: "untitled.txt".into(),
+                        history: Vec::new(),
                     };
                 } else {
                     let _ = self.buffer.save();
@@ -356,12 +465,20 @@ impl Editor {
                 self.open_file();
             }
             (KeyCode::Char('z'), KeyModifiers::CONTROL) => {
-                let _ = self.undo.undo(&mut self.buffer);
+                if self.undo.undo(&mut self.buffer) {
+                    let (line, col) = self.buffer.get_line_col(0);
+                    self.cursor_line = line;
+                    self.cursor_col = col;
+                }
                 self.clamp_cursor();
                 self.update_scroll();
             }
             (KeyCode::Char('y'), KeyModifiers::CONTROL) => {
-                let _ = self.undo.redo(&mut self.buffer);
+                if self.undo.redo(&mut self.buffer) {
+                    let (line, col) = self.buffer.get_line_col(0);
+                    self.cursor_line = line;
+                    self.cursor_col = col;
+                }
                 self.clamp_cursor();
                 self.update_scroll();
             }
@@ -371,6 +488,9 @@ impl Editor {
             (KeyCode::Char('t'), KeyModifiers::CONTROL) => {
                 self.show_help = !self.show_help;
             }
+            (KeyCode::Char('w'), KeyModifiers::CONTROL) => {
+                self.word_wrap = !self.word_wrap;
+            }
             (KeyCode::Char('T'), KeyModifiers::CONTROL | KeyModifiers::SHIFT) => {
                 let ts = Theme::all_themes();
                 let c = ts.iter().position(|x| *x == self.theme.name).unwrap_or(0);
@@ -379,18 +499,38 @@ impl Editor {
             (KeyCode::Char('f'), KeyModifiers::CONTROL) => {
                 self.mode = EditorMode::Search {
                     query: String::new(),
-                    results: Vec::new(),
-                    result_idx: 0,
+                    case_sensitive: false,
+                    backward: false,
                 };
+            }
+            (KeyCode::Char('\\'), KeyModifiers::CONTROL) => {
+                self.mode = EditorMode::Replace {
+                    search: String::new(),
+                    replace: String::new(),
+                    case_sensitive: false,
+                    all: false,
+                    confirmed: false,
+                };
+            }
+            (KeyCode::Char('g'), KeyModifiers::CONTROL) => {
+                self.mode = EditorMode::GoToLine;
             }
             (KeyCode::Up, _) => {
                 if self.cursor_line > 0 {
                     self.cursor_line -= 1;
+                    let indent = self.get_indent(self.cursor_line);
+                    if self.cursor_col < indent.len() && !indent.is_empty() {
+                        self.cursor_col = indent.len();
+                    }
                 }
             }
             (KeyCode::Down, _) => {
-                if self.cursor_line < self.buffer.lines.len() - 1 {
+                if self.cursor_line < self.buffer.num_lines() - 1 {
                     self.cursor_line += 1;
+                    let indent = self.get_indent(self.cursor_line);
+                    if self.cursor_col < indent.len() && !indent.is_empty() {
+                        self.cursor_col = indent.len();
+                    }
                 }
             }
             (KeyCode::Left, _) => {
@@ -405,90 +545,149 @@ impl Editor {
                 let line_len = self.buffer.line_len(self.cursor_line);
                 if self.cursor_col < line_len {
                     self.cursor_col += 1;
-                } else if self.cursor_line < self.buffer.lines.len() - 1 {
+                } else if self.cursor_line < self.buffer.num_lines() - 1 {
                     self.cursor_line += 1;
                     self.cursor_col = 0;
                 }
             }
             (KeyCode::Home, _) => {
-                self.cursor_col = 0;
+                let indent = self.get_indent(self.cursor_line);
+                if self.cursor_col > indent.len() {
+                    self.cursor_col = indent.len();
+                } else {
+                    self.cursor_col = 0;
+                }
             }
             (KeyCode::End, _) => {
                 self.cursor_col = self.buffer.line_len(self.cursor_line);
             }
             (KeyCode::PageUp, _) => {
-                self.cursor_line = self.cursor_line.saturating_sub(10);
+                self.cursor_line = self.cursor_line.saturating_sub(self.screen_height - 2);
             }
             (KeyCode::PageDown, _) => {
-                self.cursor_line =
-                    (self.cursor_line + 10).min(self.buffer.lines.len().saturating_sub(1));
+                let max_line = self.buffer.num_lines() - 1;
+                self.cursor_line = (self.cursor_line + self.screen_height - 2).min(max_line);
             }
             (KeyCode::Enter, _) => {
+                let indent = self.get_indent(self.cursor_line);
                 self.buffer
                     .insert_newline(self.cursor_line, self.cursor_col);
                 self.undo.push(EditOp::Insert {
-                    line: self.cursor_line,
-                    col: self.cursor_col,
-                    text: "\n".into(),
+                    pos: self.buffer.get_cursor_pos(self.cursor_line, 0),
+                    text: "\n".to_string(),
                 });
                 self.cursor_line += 1;
                 self.cursor_col = 0;
+                if self.settings.auto_indent && !indent.is_empty() {
+                    self.buffer
+                        .insert(self.buffer.get_cursor_pos(self.cursor_line, 0), &indent);
+                    self.cursor_col = indent.len();
+                }
             }
             (KeyCode::Backspace, _) => {
                 if self.cursor_col > 0 {
-                    let d = self.buffer.lines[self.cursor_line].remove(self.cursor_col - 1);
+                    let pos = self
+                        .buffer
+                        .get_cursor_pos(self.cursor_line, self.cursor_col - 1);
+                    let ch = self
+                        .buffer
+                        .get_line(self.cursor_line)
+                        .chars()
+                        .nth(self.cursor_col - 1)
+                        .unwrap_or(' ');
+                    self.buffer.delete(pos, 1);
                     self.undo.push(EditOp::Delete {
-                        line: self.cursor_line,
-                        col: self.cursor_col - 1,
-                        text: d.to_string(),
+                        pos,
+                        text: ch.to_string(),
                     });
                     self.cursor_col -= 1;
                 } else if self.cursor_line > 0 {
-                    let c = self.buffer.lines.remove(self.cursor_line);
+                    let prev_line_len = self.buffer.line_len(self.cursor_line - 1);
+                    self.buffer.delete(
+                        self.buffer
+                            .get_cursor_pos(self.cursor_line, 0)
+                            .saturating_sub(1),
+                        1,
+                    );
                     self.cursor_line -= 1;
-                    self.cursor_col = self.buffer.line_len(self.cursor_line);
-                    self.buffer.lines[self.cursor_line].push_str(&c);
-                    self.undo.push(EditOp::Delete {
-                        line: self.cursor_line,
-                        col: self.cursor_col,
-                        text: "\n".into(),
-                    });
+                    self.cursor_col = prev_line_len;
                 }
             }
             (KeyCode::Tab, _) => {
-                let spaces = " ".repeat(self.settings.tab_size);
-                if let Some(line) = self.buffer.lines.get_mut(self.cursor_line) {
-                    line.insert_str(self.cursor_col, &spaces);
+                if self.settings.use_spaces {
+                    let spaces = " ".repeat(self.settings.tab_size);
+                    let pos = self
+                        .buffer
+                        .get_cursor_pos(self.cursor_line, self.cursor_col);
+                    self.buffer.insert(pos, &spaces);
+                    self.undo.push(EditOp::Insert {
+                        pos,
+                        text: spaces.clone(),
+                    });
+                    self.cursor_col += spaces.len();
+                } else {
+                    let pos = self
+                        .buffer
+                        .get_cursor_pos(self.cursor_line, self.cursor_col);
+                    self.buffer.insert(pos, "\t");
+                    self.undo.push(EditOp::Insert {
+                        pos,
+                        text: "\t".to_string(),
+                    });
+                    self.cursor_col += 1;
                 }
-                self.undo.push(EditOp::Insert {
-                    line: self.cursor_line,
-                    col: self.cursor_col,
-                    text: spaces.clone(),
-                });
-                self.cursor_col += spaces.len();
             }
             (KeyCode::Char('k'), KeyModifiers::CONTROL) => {
-                if self.buffer.lines.len() > 1 {
-                    let deleted = self.buffer.lines.remove(self.cursor_line);
-                    if self.cursor_line >= self.buffer.lines.len() {
-                        self.cursor_line = self.buffer.lines.len() - 1;
+                if self.buffer.num_lines() > 1 {
+                    let start_pos = self.buffer.get_cursor_pos(self.cursor_line, 0);
+                    let line_len = self.buffer.line_len(self.cursor_line);
+                    let deleted = self.buffer.get_line(self.cursor_line);
+                    self.buffer.delete(start_pos, line_len + 1);
+                    if self.cursor_line >= self.buffer.num_lines() - 1 {
+                        self.cursor_line = self.buffer.num_lines() - 1;
                     }
                     self.cursor_col = self.cursor_col.min(self.buffer.line_len(self.cursor_line));
                     self.undo.push(EditOp::Delete {
-                        line: self.cursor_line,
-                        col: 0,
+                        pos: start_pos,
                         text: deleted,
                     });
                 }
             }
+            (KeyCode::Char('u'), KeyModifiers::CONTROL) => {
+                let start_pos = self.buffer.get_cursor_pos(self.cursor_line, 0);
+                if self.cursor_col > 0 {
+                    let deleted: String = self
+                        .buffer
+                        .get_line(self.cursor_line)
+                        .chars()
+                        .take(self.cursor_col)
+                        .collect();
+                    self.buffer.delete(start_pos, deleted.len());
+                    self.undo.push(EditOp::Delete {
+                        pos: start_pos,
+                        text: deleted,
+                    });
+                    self.cursor_col = 0;
+                }
+            }
+            (KeyCode::Char('d'), KeyModifiers::CONTROL) => {
+                let pos = self
+                    .buffer
+                    .get_cursor_pos(self.cursor_line, self.cursor_col);
+                if pos < self.buffer.total_len() - 1 {
+                    let ch = self.buffer.text.get_range(pos, pos + 1);
+                    self.buffer.delete(pos, 1);
+                    self.undo.push(EditOp::Delete { pos, text: ch });
+                }
+            }
             (KeyCode::Char(c), m) if m.is_empty() || m == KeyModifiers::SHIFT => {
                 if !c.is_control() {
-                    if let Some(line) = self.buffer.lines.get_mut(self.cursor_line) {
-                        line.insert(self.cursor_col, c);
-                    }
+                    let pos = self
+                        .buffer
+                        .get_cursor_pos(self.cursor_line, self.cursor_col);
+                    self.buffer.insert(pos, &c.to_string());
                     self.undo.push(EditOp::Insert {
-                        line: self.cursor_line,
-                        col: self.cursor_col,
+                        pos,
                         text: c.to_string(),
                     });
                     self.cursor_col += 1;
@@ -504,9 +703,9 @@ impl Editor {
         &mut self,
         k: &event::KeyEvent,
         mut query: String,
-        mut results: Vec<(usize, usize)>,
-        mut result_idx: usize,
-    ) -> (String, Vec<(usize, usize)>, usize, bool) {
+        mut case_sensitive: bool,
+        mut backward: bool,
+    ) -> (String, bool, bool, bool) {
         self.cursor_blink_on = true;
         self.last_cursor_time = std::time::Instant::now();
 
@@ -516,48 +715,146 @@ impl Editor {
                 should_exit = true;
             }
             KeyCode::Enter => {
-                if !results.is_empty() {
-                    let (ln, co) = results[result_idx];
-                    self.cursor_line = ln;
-                    self.cursor_col = co;
-                    self.clamp_cursor();
-                    self.update_scroll();
+                if !query.is_empty() {
+                    if let Some((line, col)) =
+                        self.buffer.find(&query, self.cursor_line, self.cursor_col)
+                    {
+                        self.cursor_line = line;
+                        self.cursor_col = col;
+                        self.clamp_cursor();
+                        self.update_scroll();
+                    }
                 }
                 should_exit = true;
             }
             KeyCode::Backspace => {
                 query.pop();
-                results.clear();
-                result_idx = 0;
-                if !query.is_empty() {
-                    for (ln, l) in self.buffer.lines.iter().enumerate() {
-                        let mut s = 0;
-                        while let Some(p) = l[s..].find(&query) {
-                            results.push((ln, s + p));
-                            s += p + 1;
-                        }
-                    }
-                }
+            }
+            KeyCode::Char('c') if k.modifiers == KeyModifiers::CONTROL => {
+                case_sensitive = !case_sensitive;
+            }
+            KeyCode::Char('r') if k.modifiers == KeyModifiers::CONTROL => {
+                backward = !backward;
             }
             KeyCode::Char(c) if k.modifiers.is_empty() || k.modifiers == KeyModifiers::SHIFT => {
                 if !c.is_control() {
                     query.push(c);
-                    results.clear();
-                    result_idx = 0;
                     if !query.is_empty() {
-                        for (ln, l) in self.buffer.lines.iter().enumerate() {
-                            let mut s = 0;
-                            while let Some(p) = l[s..].find(&query) {
-                                results.push((ln, s + p));
-                                s += p + 1;
-                            }
+                        if let Some((line, col)) =
+                            self.buffer.find(&query, self.cursor_line, self.cursor_col)
+                        {
+                            self.cursor_line = line;
+                            self.cursor_col = col;
+                            self.clamp_cursor();
+                            self.update_scroll();
                         }
                     }
                 }
             }
             _ => {}
         }
-        (query, results, result_idx, should_exit)
+        (query, case_sensitive, backward, should_exit)
+    }
+
+    fn handle_replace_owned(
+        &mut self,
+        k: &event::KeyEvent,
+        mut search: String,
+        mut replace: String,
+        case_sensitive: bool,
+        all: bool,
+        confirmed: bool,
+    ) -> (
+        String,
+        String,
+        bool,
+        bool,
+        bool,
+        Option<PendingAction>,
+        bool,
+    ) {
+        self.cursor_blink_on = true;
+        self.last_cursor_time = std::time::Instant::now();
+
+        let mut action = None;
+        let mut should_exit = false;
+        let mut new_confirmed = confirmed;
+
+        match k.code {
+            KeyCode::Esc => {
+                should_exit = true;
+            }
+            KeyCode::Enter => {
+                if confirmed {
+                    if all {
+                        action = Some(PendingAction::ReplaceAll(search.clone(), replace.clone()));
+                    } else {
+                        let _count = self.buffer.replace(&search, &replace);
+                        self.undo.clear();
+                    }
+                    should_exit = true;
+                } else {
+                    new_confirmed = true;
+                }
+            }
+            KeyCode::Tab => {
+                if search.is_empty() {
+                    search = self.buffer.get_line(self.cursor_line);
+                } else {
+                    replace = "".to_string();
+                }
+            }
+            KeyCode::Backspace => {
+                if replace.is_empty() && !search.is_empty() {
+                    search.pop();
+                } else {
+                    replace.pop();
+                }
+            }
+            KeyCode::Char('a') if k.modifiers == KeyModifiers::CONTROL => {
+                return (
+                    search,
+                    replace,
+                    case_sensitive,
+                    true,
+                    confirmed,
+                    action,
+                    should_exit,
+                );
+            }
+            KeyCode::Char(c) if k.modifiers.is_empty() || k.modifiers == KeyModifiers::SHIFT => {
+                if !c.is_control() {
+                    if replace.is_empty() && !search.is_empty() && !confirmed {
+                        replace.push(c);
+                    } else if confirmed {
+                        replace.push(c);
+                    } else {
+                        search.push(c);
+                    }
+                }
+            }
+            _ => {}
+        }
+        (
+            search,
+            replace,
+            case_sensitive,
+            all,
+            new_confirmed,
+            action,
+            should_exit,
+        )
+    }
+
+    fn handle_goto_owned(&mut self, k: &event::KeyEvent) -> (Option<usize>, bool) {
+        self.cursor_blink_on = true;
+        self.last_cursor_time = std::time::Instant::now();
+
+        match k.code {
+            KeyCode::Esc => (None, true),
+            KeyCode::Enter => (None, true),
+            _ => (None, false),
+        }
     }
 
     fn handle_confirm_owned(
@@ -583,24 +880,21 @@ impl Editor {
                     selected += 1;
                 }
             }
-            KeyCode::Enter => {
-                match options[selected].as_str() {
-                    "Yes" => {
-                        if self.buffer.path.is_some() {
-                            action = Some(PendingAction::SaveAndQuit);
-                        } else {
-                            self.quit_after_save = true;
-                            // Return Input mode instead of Confirm
-                            return (title, message, options, selected, action);
-                        }
+            KeyCode::Enter => match options[selected].as_str() {
+                "Yes" => {
+                    if self.buffer.path.is_some() {
+                        action = Some(PendingAction::SaveAndQuit);
+                    } else {
+                        self.quit_after_save = true;
+                        return (title, message, options, selected, action);
                     }
-                    "No" => {
-                        action = Some(PendingAction::QuitWithoutSave);
-                    }
-                    _ => {}
                 }
-            }
-            KeyCode::Esc => { /* will return to Normal */ }
+                "No" => {
+                    action = Some(PendingAction::QuitWithoutSave);
+                }
+                _ => {}
+            },
+            KeyCode::Esc => {}
             _ => {}
         }
         (title, message, options, selected, action)
@@ -611,7 +905,8 @@ impl Editor {
         k: &event::KeyEvent,
         title: String,
         mut input: String,
-    ) -> (String, String, Option<PendingAction>) {
+        mut history: Vec<String>,
+    ) -> (String, String, Vec<String>, Option<PendingAction>) {
         self.cursor_blink_on = true;
         self.last_cursor_time = std::time::Instant::now();
 
@@ -619,17 +914,23 @@ impl Editor {
         match k.code {
             KeyCode::Enter => {
                 action = Some(PendingAction::SaveAs(input.clone()));
+                if !input.is_empty() {
+                    history.push(input.clone());
+                }
             }
-            KeyCode::Esc => { /* will return to Normal */ }
+            KeyCode::Esc => {}
             KeyCode::Backspace => {
                 input.pop();
             }
             KeyCode::Char(c) if !c.is_control() => {
                 input.push(c);
             }
+            KeyCode::Tab => {
+                input.push('\t');
+            }
             _ => {}
         }
-        (title, input, action)
+        (title, input, history, action)
     }
 
     fn open_file(&mut self) {
@@ -641,12 +942,11 @@ impl Editor {
             {
                 if let Some(ext) = e.path().extension() {
                     let ext_str = ext.to_string_lossy().to_lowercase();
-                    if [
+                    let known_exts = [
                         "txt", "rs", "js", "ts", "py", "go", "md", "json", "toml", "yaml", "c",
-                        "h", "cpp",
-                    ]
-                    .contains(&ext_str.as_str())
-                    {
+                        "h", "cpp", "hpp", "sh", "bash", "zsh", "html", "css", "xml",
+                    ];
+                    if known_exts.contains(&ext_str.as_str()) {
                         if let Some(b) = Buffer::from_file(e.path()) {
                             self.buffer = b;
                             self.cursor_line = 0;
@@ -669,22 +969,41 @@ impl Editor {
         let eh = a.height.saturating_sub(th + hh + sh);
 
         let ta = Rect::new(a.x, a.y, a.width, th);
+        let modified_indicator = if self.buffer.is_modified {
+            " [Modified]"
+        } else {
+            ""
+        };
         f.render_widget(
             TitleBar {
-                file_name: format!(" Nova - {} ", self.buffer.file_name()),
+                file_name: format!(" Nova - {}{} ", self.buffer.file_name(), modified_indicator),
                 theme: self.theme.clone(),
             },
             ta,
         );
 
         let sa = Rect::new(a.x, a.y + th + eh, a.width, sh);
-        let (search_mode, status_text) = match &self.mode {
-            EditorMode::Search { query, .. } => (true, query.clone()),
-            EditorMode::Confirm { title, message, .. } => {
-                (true, format!("{} - {}", title, message))
+        let status_text = match &self.mode {
+            EditorMode::Search { query, .. } => format!("Search: {}", query),
+            EditorMode::Replace {
+                search,
+                replace,
+                confirmed,
+                ..
+            } => {
+                if *confirmed {
+                    format!(
+                        "Replace '{}' with '{}'? [Enter=Yes, A=all, C=cancel]",
+                        search, replace
+                    )
+                } else {
+                    format!("Replace: {} -> {}", search, replace)
+                }
             }
-            EditorMode::Input { title, input, .. } => (true, format!("{}: {}", title, input)),
-            _ => (false, "".into()),
+            EditorMode::GoToLine => "Go to line:".to_string(),
+            EditorMode::Confirm { title, message, .. } => format!("{} - {}", title, message),
+            EditorMode::Input { title, input, .. } => format!("{}: {}", title, input),
+            _ => format!("Ln {}, Col {}", self.cursor_line + 1, self.cursor_col + 1),
         };
         f.render_widget(
             StatusBar {
@@ -694,7 +1013,7 @@ impl Editor {
                 col: self.cursor_col + 1,
                 language: self.buffer.language.clone(),
                 theme: self.theme.clone(),
-                search_mode,
+                search_mode: !matches!(self.mode, EditorMode::Normal),
                 search_text: status_text,
             },
             sa,
@@ -708,9 +1027,12 @@ impl Editor {
                         ("Ctrl+O", "Open"),
                         ("Ctrl+S", "Save"),
                         ("Ctrl+F", "Find"),
+                        ("Ctrl+\\", "Replace"),
+                        ("Ctrl+G", "Go to line"),
                         ("Ctrl+Z", "Undo"),
                         ("Ctrl+Y", "Redo"),
                         ("Ctrl+T", "Theme"),
+                        ("Ctrl+W", "Wrap"),
                         ("Ctrl+B", "Lines"),
                         ("Ctrl+Q", "Quit"),
                     ],
@@ -724,46 +1046,53 @@ impl Editor {
         let ea = Rect::new(a.x, a.y + th, a.width, eh);
         f.render_widget(
             EditorView {
-                lines: self.buffer.lines.clone(),
+                buffer: self.buffer.clone(),
                 cursor_line: self.cursor_line,
                 cursor_col: self.cursor_col,
                 show_line_numbers: self.show_line_numbers,
                 scroll_offset: self.scroll_offset,
                 theme: self.theme.clone(),
                 cursor_blink_on: self.cursor_blink_on,
+                word_wrap: self.word_wrap,
+                width: self.screen_width as u16,
             },
             ea,
         );
 
-        if let EditorMode::Input { title, input } = &self.mode {
-            let dw = 40u16;
-            let dh = 5u16;
-            let dx = (a.width.saturating_sub(dw)) / 2;
-            let dy = (a.height.saturating_sub(dh)) / 2;
-            let dr = Rect::new(a.x + dx, a.y + dy, dw, dh);
-            let bp = ratatui::widgets::Block::default()
-                .title(title.clone())
-                .borders(ratatui::widgets::Borders::ALL)
-                .border_type(ratatui::widgets::BorderType::Double)
-                .style(
-                    Style::default()
-                        .bg(self.theme.background)
-                        .fg(self.theme.foreground),
-                );
-            f.render_widget(bp, dr);
-            let tr = dr.inner(Margin {
-                horizontal: 1,
-                vertical: 1,
-            });
-            f.render_widget(
-                Paragraph::new(input.clone()).style(
-                    Style::default()
-                        .bg(self.theme.background)
-                        .fg(self.theme.foreground),
-                ),
-                tr,
-            );
+        if let EditorMode::Input { title, input, .. } = &self.mode {
+            self.render_input_dialog(f, a, title, input);
+        } else if let EditorMode::GoToLine = &self.mode {
+            self.render_input_dialog(f, a, "Go to Line", "");
         }
+    }
+
+    fn render_input_dialog(&self, f: &mut ratatui::Frame, area: Rect, title: &str, input: &str) {
+        let dw = 30u16;
+        let dh = 3u16;
+        let dx = (area.width.saturating_sub(dw)) / 2;
+        let dy = (area.height.saturating_sub(dh)) / 2;
+        let dr = Rect::new(area.x + dx, area.y + dy, dw, dh);
+
+        let bp = ratatui::widgets::Block::default()
+            .title(format!(" {} ", title))
+            .borders(ratatui::widgets::Borders::ALL)
+            .border_type(ratatui::widgets::BorderType::Double)
+            .style(
+                Style::default()
+                    .bg(self.theme.background)
+                    .fg(self.theme.foreground),
+            );
+        f.render_widget(bp, dr);
+
+        let tr = dr.inner(Margin::new(1, 1));
+        f.render_widget(
+            Paragraph::new(input.to_string()).style(
+                Style::default()
+                    .bg(self.theme.background)
+                    .fg(self.theme.foreground),
+            ),
+            tr,
+        );
     }
 }
 
@@ -773,21 +1102,32 @@ fn run(initial_file: Option<String>) -> io::Result<()> {
     o.execute(EnterAlternateScreen)?;
     let b = CrosstermBackend::new(o);
     let mut t = Terminal::new(b)?;
-    let mut e = Editor::new(initial_file);
+
+    let (width, height) = size().unwrap_or((80, 24));
+
+    let mut e = Editor::new(initial_file, width as usize, height as usize);
+
     loop {
         t.draw(|f| e.render(f))?;
+
         if event::poll(std::time::Duration::from_millis(50))? {
             if let Event::Key(k) = event::read()? {
                 if k.kind == KeyEventKind::Press {
                     e.handle_key(&k);
                 }
             }
+            if let Event::Resize(w, h) = event::read().unwrap_or(Event::Resize(80, 24)) {
+                e.screen_width = w as usize;
+                e.screen_height = h as usize;
+            }
         }
+
         e.update_cursor_blink();
         if e.should_quit {
             break;
         }
     }
+
     disable_raw_mode()?;
     t.backend_mut().execute(LeaveAlternateScreen)?;
     Ok(())
@@ -807,7 +1147,7 @@ fn main() -> io::Result<()> {
     if let Err(x) = run(initial_file) {
         disable_raw_mode()?;
         stdout().execute(LeaveAlternateScreen).ok();
-        eprintln!("{}", x);
+        eprintln!("Error: {}", x);
         std::process::exit(1);
     }
     Ok(())

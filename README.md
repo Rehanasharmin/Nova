@@ -2,6 +2,17 @@
 
 A terminal-based text editor built with Rust and Ratatui.
 
+## Features
+
+- Gap buffer for efficient editing of large files
+- Search and replace with confirmation
+- Go to line number
+- Auto-indentation
+- Soft tabs (spaces)
+- Multiple themes
+- Undo/redo
+- Line numbers
+
 ## Installation
 
 ```bash
@@ -41,6 +52,8 @@ Nova uses a line-based buffer model with direct terminal rendering via Crossterm
 | Ctrl+S | Save |
 | Ctrl+O | Open file |
 | Ctrl+F | Search |
+| Ctrl+G | Go to line |
+| Ctrl+\ | Replace |
 | Ctrl+Z | Undo |
 | Ctrl+Y | Redo |
 | Ctrl+T | Cycle theme |
@@ -54,6 +67,7 @@ Config file: `~/.config/nova/config.toml`
 ```toml
 tab_size = 4
 use_spaces = true
+auto_indent = true
 show_line_numbers = true
 highlight_current_line = true
 word_wrap = false
