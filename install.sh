@@ -104,6 +104,9 @@ compile_from_source() {
                 if [ -f "$HOME/.cargo/env" ]; then
                     source "$HOME/.cargo/env"
                 fi
+                if command -v rustup &> /dev/null; then
+                    rustup default stable 2>/dev/null || true
+                fi
             fi
         elif [ "$os" = "macos" ]; then
             if command -v brew &> /dev/null; then
