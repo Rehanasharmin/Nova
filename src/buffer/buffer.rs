@@ -181,7 +181,15 @@ impl GapBuffer {
     }
 
     pub fn num_lines(&self) -> usize {
-        self.line_offsets.len().max(1) - 1
+        if self.line_offsets.len() <= 1 {
+            return 1;
+        }
+        let len = self.line_offsets.len();
+        if self.line_offsets[len - 1] == self.line_offsets[len - 2] {
+            len - 2
+        } else {
+            len - 1
+        }
     }
 
     pub fn get_line_offsets(&self) -> Vec<usize> {
