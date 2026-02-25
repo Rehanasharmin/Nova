@@ -2,16 +2,6 @@
 
 A terminal-based text editor built with Rust and Ratatui.
 
-## Features
-
-- Gap buffer for efficient editing of large files
-- Search and replace with confirmation
-- Go to line number
-- Auto-indentation
-- Soft tabs (spaces)
-- Multiple themes
-- Undo/redo
-- Line numbers
 
 ## Installation
 
@@ -25,6 +15,16 @@ curl -sL https://raw.githubusercontent.com/Rehanasharmin/Nova/main/install.sh | 
 nova              # Open empty buffer
 nova file.txt    # Open existing file or create new one
 ```
+## Features
+
+- Gap buffer for efficient editing of large files
+- Search and replace with confirmation
+- Go to line number
+- Auto-indentation
+- Soft tabs (spaces)
+- Multiple themes
+- Undo/redo
+- Line numbers
 
 ## Developer Setup
 
