@@ -151,6 +151,10 @@ impl GapBuffer {
         self.line_offsets.len().max(1) - 1
     }
 
+    pub fn get_line_offsets(&self) -> Vec<usize> {
+        self.line_offsets.clone()
+    }
+
     #[allow(dead_code)]
     pub fn line_start_offset(&self, line_num: usize) -> usize {
         let mut offset = 0;
@@ -215,14 +219,14 @@ impl Buffer {
     pub fn new() -> Self {
         let mut text = GapBuffer::new();
         text.insert(0, "\n");
-        let mut buf = Self {
+        let offsets = text.get_line_offsets();
+        let buf = Self {
             text,
             path: None,
             is_modified: false,
             language: "plaintext".to_string(),
-            line_offsets: vec![0],
+            line_offsets: offsets,
         };
-        buf.update_line_offsets();
         buf
     }
 
@@ -235,14 +239,14 @@ impl Buffer {
         };
 
         let text = GapBuffer::from_string(&content);
-        let mut buf = Self {
+        let offsets = text.get_line_offsets();
+        let buf = Self {
             text,
-            path: Some(path.clone()),
+            path: Some(path),
             is_modified: false,
-            language: detect_language(&path),
-            line_offsets: vec![0],
+            language: "plaintext".to_string(),
+            line_offsets: offsets,
         };
-        buf.update_line_offsets();
         Some(buf)
     }
 
@@ -254,33 +258,21 @@ impl Buffer {
             path: Some(path),
             is_modified: false,
             language: "plaintext".to_string(),
-            line_offsets: vec![0],
+            line_offsets: Vec::new(),
         };
-        buf.update_line_offsets();
+        buf.line_offsets = buf.text.get_line_offsets();
         buf
-    }
-
-    fn update_line_offsets(&mut self) {
-        self.line_offsets.clear();
-        self.line_offsets.push(0);
-
-        let bytes = self.text.to_string();
-        for (i, byte) in bytes.bytes().enumerate() {
-            if byte == b'\n' {
-                self.line_offsets.push(i + 1);
-            }
-        }
     }
 
     pub fn insert(&mut self, pos: usize, text: &str) {
         self.text.insert(pos, text);
-        self.update_line_offsets();
+        self.line_offsets = self.text.get_line_offsets();
         self.is_modified = true;
     }
 
     pub fn delete(&mut self, pos: usize, len: usize) {
         self.text.delete(pos, len);
-        self.update_line_offsets();
+        self.line_offsets = self.text.get_line_offsets();
         self.is_modified = true;
     }
 
@@ -293,7 +285,16 @@ impl Buffer {
     }
 
     pub fn line_len(&self, line: usize) -> usize {
-        self.get_line(line).len()
+        if line >= self.line_offsets.len() {
+            return 0;
+        }
+        let start = self.line_offsets[line];
+        let end = if line + 1 < self.line_offsets.len() {
+            self.line_offsets[line + 1]
+        } else {
+            self.text.len()
+        };
+        end.saturating_sub(start)
     }
 
     pub fn total_len(&self) -> usize {
@@ -303,7 +304,7 @@ impl Buffer {
     pub fn insert_newline(&mut self, line: usize, col: usize) {
         let pos = self.get_cursor_pos(line, col);
         self.text.insert(pos, "\n");
-        self.update_line_offsets();
+        self.line_offsets = self.text.get_line_offsets();
         self.is_modified = true;
     }
 
@@ -312,8 +313,12 @@ impl Buffer {
             return self.text.len();
         }
         let offset = self.line_offsets[line];
-        let line_content = self.get_line(line);
-        let col = col.min(line_content.len());
+        let line_len = if line + 1 < self.line_offsets.len() {
+            self.line_offsets[line + 1].saturating_sub(offset)
+        } else {
+            0
+        };
+        let col = col.min(line_len);
         offset + col
     }
 
@@ -404,7 +409,7 @@ impl Buffer {
         if !new_text.ends_with('\n') {
             self.text.insert(self.text.len(), "\n");
         }
-        self.update_line_offsets();
+        self.line_offsets = self.text.get_line_offsets();
         self.is_modified = true;
         count
     }
