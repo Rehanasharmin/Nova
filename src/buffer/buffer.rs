@@ -117,7 +117,7 @@ impl GapBuffer {
         }
 
         let start = self.line_offsets[line_num];
-        let end = self.line_offsets[line_num + 1];
+        let mut end = self.line_offsets[line_num + 1];
 
         if end == 0 {
             return String::new();
@@ -126,11 +126,34 @@ impl GapBuffer {
         if start < self.before.len() {
             let before_end = self.before.len();
             if end <= before_end {
-                return String::from_utf8_lossy(&self.before[start..end]).to_string();
+                let actual_end = if end > 0 && self.before[end.saturating_sub(1)] == b'\n' {
+                    end - 1
+                } else {
+                    end
+                };
+                if actual_end > start {
+                    return String::from_utf8_lossy(&self.before[start..actual_end]).to_string();
+                }
+                return String::new();
             } else {
-                let before_part = &self.before[start..];
-                let after_end = end - before_end;
-                let after_part = &self.after[..after_end.min(self.after.len())];
+                let before_part_end = before_end.min(end);
+                let actual_before_end = if before_part_end > start
+                    && before_part_end <= self.before.len()
+                    && self.before[before_part_end.saturating_sub(1)] == b'\n'
+                {
+                    before_part_end - 1
+                } else {
+                    before_part_end
+                };
+                let before_part = &self.before[start..actual_before_end];
+                let after_end = (end - before_end).min(self.after.len());
+                let actual_after_end =
+                    if after_end > 0 && self.after[after_end.saturating_sub(1)] == b'\n' {
+                        after_end - 1
+                    } else {
+                        after_end
+                    };
+                let after_part = &self.after[..actual_after_end];
                 let mut result = Vec::with_capacity(before_part.len() + after_part.len());
                 result.extend_from_slice(before_part);
                 result.extend_from_slice(after_part);
@@ -140,7 +163,17 @@ impl GapBuffer {
             let after_start = start - self.before.len();
             let after_end = (end - self.before.len()).min(self.after.len());
             if after_start < self.after.len() {
-                return String::from_utf8_lossy(&self.after[after_start..after_end]).to_string();
+                let actual_end = if after_end > after_start
+                    && self.after[after_end.saturating_sub(1)] == b'\n'
+                {
+                    after_end - 1
+                } else {
+                    after_end
+                };
+                if actual_end > after_start {
+                    return String::from_utf8_lossy(&self.after[after_start..actual_end])
+                        .to_string();
+                }
             }
         }
 
