@@ -4,6 +4,7 @@ use std::path::PathBuf;
 pub struct GapBuffer {
     before: Vec<u8>,
     after: Vec<u8>,
+    line_offsets: Vec<usize>,
 }
 
 impl GapBuffer {
@@ -11,13 +12,35 @@ impl GapBuffer {
         Self {
             before: Vec::new(),
             after: Vec::new(),
+            line_offsets: vec![0],
         }
+    }
+
+    fn build_cache(&mut self) {
+        self.line_offsets.clear();
+        self.line_offsets.push(0);
+
+        for (i, &byte) in self.before.iter().enumerate() {
+            if byte == b'\n' {
+                self.line_offsets.push(i + 1);
+            }
+        }
+
+        let after_start = self.before.len();
+        for (i, &byte) in self.after.iter().enumerate() {
+            if byte == b'\n' {
+                self.line_offsets.push(after_start + i + 1);
+            }
+        }
+
+        self.line_offsets.push(self.before.len() + self.after.len());
     }
 
     #[allow(dead_code)]
     pub fn from_string(s: &str) -> Self {
         let mut buf = Self::new();
         buf.before = s.as_bytes().to_vec();
+        buf.build_cache();
         buf
     }
 
@@ -74,71 +97,58 @@ impl GapBuffer {
     pub fn insert(&mut self, pos: usize, text: &str) {
         self.move_gap(pos);
         self.before.extend_from_slice(text.as_bytes());
+        self.build_cache();
     }
 
     pub fn delete(&mut self, pos: usize, len: usize) {
         self.move_gap(pos);
         let del_len = len.min(self.after.len());
         self.after.drain(..del_len);
+        self.build_cache();
     }
 
     pub fn get_line(&self, line_num: usize) -> String {
-        let mut line_start = 0;
-        let mut current_line = 0;
-
-        for (i, &byte) in self.before.iter().enumerate() {
-            if byte == b'\n' {
-                if current_line == line_num {
-                    return String::from_utf8_lossy(&self.before[line_start..i]).to_string();
-                }
-                current_line += 1;
-                line_start = i + 1;
-            }
+        if self.line_offsets.len() <= 1 {
+            return String::new();
         }
 
-        let before_end = self.before.len();
-        let mut after_start = if self.before.last() == Some(&b'\n') {
-            0
-        } else {
-            before_end
-        };
-
-        for (i, &byte) in self.after.iter().enumerate() {
-            if byte == b'\n' {
-                if current_line == line_num && after_start <= i {
-                    return String::from_utf8_lossy(&self.after[after_start..i]).to_string();
-                }
-                current_line += 1;
-                after_start = i + 1;
-            }
+        if line_num >= self.line_offsets.len() - 1 {
+            return String::new();
         }
 
-        if current_line == line_num {
-            if after_start < self.after.len() {
-                String::from_utf8_lossy(&self.after[after_start..]).to_string()
-            } else if line_start < before_end {
-                String::from_utf8_lossy(&self.before[line_start..]).to_string()
+        let start = self.line_offsets[line_num];
+        let end = self.line_offsets[line_num + 1];
+
+        if end == 0 {
+            return String::new();
+        }
+
+        if start < self.before.len() {
+            let before_end = self.before.len();
+            if end <= before_end {
+                return String::from_utf8_lossy(&self.before[start..end]).to_string();
             } else {
-                String::new()
+                let before_part = &self.before[start..];
+                let after_end = end - before_end;
+                let after_part = &self.after[..after_end.min(self.after.len())];
+                let mut result = Vec::with_capacity(before_part.len() + after_part.len());
+                result.extend_from_slice(before_part);
+                result.extend_from_slice(after_part);
+                return String::from_utf8_lossy(&result).to_string();
             }
         } else {
-            String::new()
+            let after_start = start - self.before.len();
+            let after_end = (end - self.before.len()).min(self.after.len());
+            if after_start < self.after.len() {
+                return String::from_utf8_lossy(&self.after[after_start..after_end]).to_string();
+            }
         }
+
+        String::new()
     }
 
     pub fn num_lines(&self) -> usize {
-        let mut count = 1;
-        for &byte in &self.before {
-            if byte == b'\n' {
-                count += 1;
-            }
-        }
-        for &byte in &self.after {
-            if byte == b'\n' {
-                count += 1;
-            }
-        }
-        count
+        self.line_offsets.len().max(1) - 1
     }
 
     #[allow(dead_code)]
