@@ -125,6 +125,11 @@ compile_from_source() {
         source "$HOME/.cargo/env"
     fi
     
+    if command -v rustup &> /dev/null; then
+        print_status "Setting up Rust toolchain..."
+        rustup default stable 2>/dev/null || rustup install stable 2>/dev/null || true
+    fi
+    
     print_status "Configuring cargo network settings..."
     mkdir -p "$HOME/.cargo"
     cat > "$HOME/.cargo/config.toml" << 'CARGOEOF'
