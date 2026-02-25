@@ -2,7 +2,7 @@
 
 set -e
 
-GITHUB_REPO="YOUR_USERNAME/nova"
+GITHUB_REPO="Rehanasharmin/Nova"
 INSTALL_DIR="$HOME/.local/bin"
 CONFIG_DIR="$HOME/.config/nova"
 VERSION_URL="https://api.github.com/repos/${GITHUB_REPO}/releases/latest"

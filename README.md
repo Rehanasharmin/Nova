@@ -5,7 +5,7 @@ A terminal-based text editor built with Rust and Ratatui.
 ## Installation
 
 ```bash
-curl -sL https://raw.githubusercontent.com/YOUR_USERNAME/nova/main/install.sh | bash
+curl -sL https://raw.githubusercontent.com/Rehanasharmin/Nova/main/install.sh | bash
 ```
 
 ## Usage
@@ -24,7 +24,7 @@ nova file.txt    # Open existing file or create new one
 ### Source Installation
 
 ```bash
-git clone https://github.com/YOUR_USERNAME/nova.git
+git clone https://github.com/Rehanasharmin/Nova.git
 cd nova
 cargo build --release
 ./target/release/nova
