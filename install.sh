@@ -89,11 +89,67 @@ detect_extension() {
     esac
 }
 
+compile_from_source() {
+    print_status "Installing build dependencies..."
+    if [ "$os" = "termux" ]; then
+        pkg install -y rust clang 2>/dev/null || true
+    elif [ "$os" = "linux" ]; then
+        if command -v apt-get &> /dev/null; then
+            sudo apt-get update && sudo apt-get install -y rust cargo clang 2>/dev/null || true
+        elif command -v dnf &> /dev/null; then
+            sudo dnf install -y rust cargo clang 2>/dev/null || true
+        elif command -v pacman &> /dev/null; then
+            sudo pacman -S --noconfirm rust clang 2>/dev/null || true
+        fi
+    elif [ "$os" = "macos" ]; then
+        if command -v brew &> /dev/null; then
+            brew install rust clang 2>/dev/null || true
+        fi
+    fi
+
+    print_status "Cloning repository..."
+    TEMP_DIR=$(mktemp -d)
+    if ! git clone --depth 1 "https://github.com/${GITHUB_REPO}.git" "$TEMP_DIR/nova" 2>/dev/null; then
+        print_error "Failed to clone repository"
+        rm -rf "$TEMP_DIR"
+        exit 1
+    fi
+
+    print_status "Building nova (this may take a few minutes)..."
+    cd "$TEMP_DIR/nova"
+    if ! cargo build --release 2>&1; then
+        print_error "Build failed"
+        rm -rf "$TEMP_DIR"
+        exit 1
+    fi
+
+    if [ -z "$INSTALL_DIR" ]; then
+        INSTALL_DIR="$HOME/.local/bin"
+    fi
+    mkdir -p "$INSTALL_DIR"
+
+    if [ -f "$TEMP_DIR/nova/target/release/nova" ]; then
+        cp "$TEMP_DIR/nova/target/release/nova" "$INSTALL_DIR/nova"
+        chmod +x "$INSTALL_DIR/nova"
+        print_success "Compiled and installed to $INSTALL_DIR/nova"
+    else
+        print_error "Build failed - binary not found"
+        rm -rf "$TEMP_DIR"
+        exit 1
+    fi
+    rm -rf "$TEMP_DIR"
+}
+
 print_banner
 print_status "Detecting system..."
 
 detect_os
 detect_arch
+
+if [ "$os" = "termux" ]; then
+    INSTALL_DIR="$PREFIX/bin"
+    CONFIG_DIR="$HOME/.config/nova"
+fi
 
 print_status "Operating system: $os"
 print_status "Architecture: $arch"
@@ -107,66 +163,34 @@ fi
 
 DOWNLOAD_URL=""
 if [ -n "$VERSION_DATA" ]; then
-    # Use linux binary for termux since they're compatible
-    if [ "$os" = "termux" ]; then
-        DOWNLOAD_URL=$(echo "$VERSION_DATA" | grep -o "browser_download_url.*nova-linux-${arch}[^\"]*" | head -1 | sed 's/browser_download_url.*"//' | tr -d '"')
-    else
-        DOWNLOAD_URL=$(echo "$VERSION_DATA" | grep -o "browser_download_url.*nova-${os}-${arch}[^\"]*" | head -1 | sed 's/browser_download_url.*"//' | tr -d '"')
-    fi
-fi
-
-# If no release binary, download from repo
-if [ -z "$DOWNLOAD_URL" ]; then
-    if [ "$os" = "termux" ]; then
-        DOWNLOAD_URL="https://raw.githubusercontent.com/${GITHUB_REPO}/main/target/release/nova"
-    else
-        DOWNLOAD_URL="https://raw.githubusercontent.com/${GITHUB_REPO}/main/target/release/nova"
-    fi
-    FILENAME="nova"
-else
-    FILENAME=$(basename "$DOWNLOAD_URL")
+    DOWNLOAD_URL=$(echo "$VERSION_DATA" | grep -o "browser_download_url.*nova-${os}-${arch}[^\"]*" | head -1 | sed 's/browser_download_url.*"//' | tr -d '"')
 fi
 
 if [ "$os" = "termux" ]; then
     INSTALL_DIR="$PREFIX/bin"
-fi
-
-mkdir -p "$INSTALL_DIR"
-
-print_status "Downloading nova..."
-
-if [[ "$DOWNLOAD_URL" == *"raw.githubusercontent.com"* ]]; then
-    curl -sL "$DOWNLOAD_URL" -o "$INSTALL_DIR/nova"
+    print_status "Termux detected - will compile from source..."
+    compile_from_source
 else
-    (
-        curl -sL --progress-bar "$DOWNLOAD_URL" -o "$INSTALL_DIR/nova"
-    ) &
-    spinner $! "Downloading nova"
-fi
-
-chmod +x "$INSTALL_DIR/nova"
-
-if [ -f "$INSTALL_DIR/nova" ]; then
-    print_success "Binary installed to $INSTALL_DIR/nova"
-else
-    print_error "Download failed"
-    print_warning "Trying to compile from source..."
-    if [ "$os" = "termux" ]; then
-        pkg install -y rust clang 2>/dev/null || true
-    fi
-    TEMP_DIR=$(mktemp -d)
-    git clone --depth 1 "https://github.com/${GITHUB_REPO}.git" "$TEMP_DIR/nova" 2>/dev/null
-    cd "$TEMP_DIR/nova"
-    cargo build --release 2>/dev/null
-    if [ -f "$TEMP_DIR/nova/target/release/nova" ]; then
-        cp "$TEMP_DIR/nova/target/release/nova" "$INSTALL_DIR/nova"
+    if [ -n "$DOWNLOAD_URL" ]; then
+        mkdir -p "$INSTALL_DIR"
+        print_status "Downloading nova..."
+        (
+            curl -sL --progress-bar "$DOWNLOAD_URL" -o "$INSTALL_DIR/nova"
+        ) &
+        spinner $! "Downloading nova"
         chmod +x "$INSTALL_DIR/nova"
-        print_success "Compiled and installed!"
+        if [ -f "$INSTALL_DIR/nova" ]; then
+            print_success "Binary installed to $INSTALL_DIR/nova"
+        else
+            print_warning "Download failed, compiling from source..."
+            compile_from_source
+        fi
     else
-        print_error "Build failed"
-        exit 1
+        print_warning "No pre-built binary found, compiling from source..."
+        INSTALL_DIR="$HOME/.local/bin"
+        mkdir -p "$INSTALL_DIR"
+        compile_from_source
     fi
-    rm -rf "$TEMP_DIR"
 fi
 
 mkdir -p "$CONFIG_DIR"
@@ -191,7 +215,14 @@ fi
 
 SHELL_RC=""
 if [ "$os" = "termux" ]; then
-    SHELL_RC="$HOME/.bashrc"
+    if [ -f "$HOME/.bashrc" ]; then
+        SHELL_RC="$HOME/.bashrc"
+    elif [ -f "$HOME/.zshrc" ]; then
+        SHELL_RC="$HOME/.zshrc"
+    else
+        SHELL_RC="$HOME/.bashrc"
+        touch "$SHELL_RC"
+    fi
 elif [ -f "$HOME/.bashrc" ]; then
     SHELL_RC="$HOME/.bashrc"
 elif [ -f "$HOME/.bash_profile" ]; then
