@@ -198,6 +198,7 @@ struct Editor {
     last_cursor_time: std::time::Instant,
     screen_width: usize,
     screen_height: usize,
+    current_tip: String,
 }
 
 impl Editor {
@@ -235,6 +236,7 @@ impl Editor {
             last_cursor_time: std::time::Instant::now(),
             screen_width: width,
             screen_height: height,
+            current_tip: String::new(),
         }
     }
 
@@ -245,6 +247,10 @@ impl Editor {
             .unwrap()
             .as_millis() as usize;
         TIPS[seed % TIPS.len()].to_string()
+    }
+
+    fn generate_tip(&mut self) {
+        self.current_tip = Self::get_random_tip();
     }
 
     fn update_scroll(&mut self) {
@@ -462,6 +468,7 @@ impl Editor {
 
         match (k.code, k.modifiers) {
             (KeyCode::Char('h'), KeyModifiers::CONTROL) => {
+                self.generate_tip();
                 self.mode = EditorMode::Help;
             }
             (KeyCode::Char('q'), KeyModifiers::CONTROL) => {
@@ -1064,6 +1071,7 @@ impl Editor {
                     ],
                     visible: true,
                     theme: self.theme.clone(),
+                    tip: self.current_tip.clone(),
                 },
                 ha,
             );
@@ -1104,8 +1112,6 @@ impl Editor {
         let dy = (area.height.saturating_sub(dh)) / 2;
         let dr = Rect::new(area.x + dx, area.y + dy, dw, dh);
 
-        let tip = Self::get_random_tip();
-
         let bp = ratatui::widgets::Block::default()
             .title(" Help - Press Ctrl+H or ESC to close ")
             .borders(ratatui::widgets::Borders::ALL)
@@ -1117,19 +1123,14 @@ impl Editor {
             );
         f.render_widget(bp, dr);
 
-        let content = format!(
-            "Key          Action              Key          Action\n\
+        let content = "Key          Action              Key          Action\n\
              ------------------------------------------------\n\
              Ctrl+O       Open file           Ctrl+Z       Undo\n\
              Ctrl+S       Save file           Ctrl+Y       Redo\n\
              Ctrl+F       Find text           Ctrl+T       Change theme\n\
              Ctrl+G       Go to line          Ctrl+B       Toggle lines\n\
              Ctrl+\\       Replace             Ctrl+W       Toggle wrap\n\
-             Ctrl+Q       Quit                Ctrl+H       Help\n\
-             ------------------------------------------------\n\
-             Tip: {}",
-            tip
-        );
+             Ctrl+Q       Quit                Ctrl+H       Help";
 
         let tr = dr.inner(Margin::new(1, 1));
         f.render_widget(

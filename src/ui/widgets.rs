@@ -390,6 +390,7 @@ pub struct HelpBar {
     pub shortcuts: Vec<(&'static str, &'static str)>,
     pub visible: bool,
     pub theme: Theme,
+    pub tip: String,
 }
 
 impl HelpBar {
@@ -398,6 +399,7 @@ impl HelpBar {
             shortcuts: vec![],
             visible: true,
             theme: Theme::monokai_pro(),
+            tip: String::new(),
         }
     }
 }
@@ -465,6 +467,25 @@ impl Widget for HelpBar {
                     .set_char(' ')
                     .set_style(style);
                 x_pos += 1;
+            }
+        }
+
+        // Show tip if available (on the right side)
+        if !self.tip.is_empty() {
+            let tip_text = format!(" Tip: {}", self.tip);
+            let tip_len = tip_text.len();
+            let start_x = (area.width as usize).saturating_sub(tip_len + 2);
+
+            // Draw tip with different style
+            let tip_style = ratatui::style::Style::default()
+                .bg(self.theme.help_bar_bg)
+                .fg(self.theme.accent);
+
+            for (i, c) in tip_text.chars().enumerate() {
+                let pos_x = area.x + start_x as u16 + i as u16;
+                if pos_x < area.x + area.width - 1 {
+                    buf[(pos_x, area.y)].set_char(c).set_style(tip_style);
+                }
             }
         }
 
