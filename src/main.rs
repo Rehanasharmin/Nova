@@ -155,7 +155,21 @@ enum EditorMode {
         input: String,
         history: Vec<String>,
     },
+    Help,
 }
+
+static TIPS: &[&str] = &[
+    "Press Ctrl+F to search for text in the file",
+    "Press Ctrl+\\ to find and replace text",
+    "Press Ctrl+G to jump to a specific line number",
+    "Use Ctrl+Z to undo and Ctrl+Y to redo changes",
+    "Press Ctrl+T to cycle through different themes",
+    "Press Ctrl+B to toggle line numbers on/off",
+    "Enable soft tabs in config for spaces instead of tabs",
+    "Auto-indent is on by default - it preserves code structure",
+    "Press Ctrl+W to toggle word wrap for long lines",
+    "Use Ctrl+O to open a file, Ctrl+S to save",
+];
 
 #[derive(Clone)]
 enum PendingAction {
@@ -222,6 +236,15 @@ impl Editor {
             screen_width: width,
             screen_height: height,
         }
+    }
+
+    fn get_random_tip() -> String {
+        use std::time::{SystemTime, UNIX_EPOCH};
+        let seed = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_millis() as usize;
+        TIPS[seed % TIPS.len()].to_string()
     }
 
     fn update_scroll(&mut self) {
@@ -388,6 +411,13 @@ impl Editor {
                     self.mode = EditorMode::Normal;
                 }
             }
+            EditorMode::Help => {
+                if key.code == KeyCode::Esc
+                    || (key.code == KeyCode::Char('h') && key.modifiers == KeyModifiers::CONTROL)
+                {
+                    self.mode = EditorMode::Normal;
+                }
+            }
         }
 
         if let Some(action) = self.pending_action.take() {
@@ -431,6 +461,9 @@ impl Editor {
         self.last_cursor_time = std::time::Instant::now();
 
         match (k.code, k.modifiers) {
+            (KeyCode::Char('h'), KeyModifiers::CONTROL) => {
+                self.mode = EditorMode::Help;
+            }
             (KeyCode::Char('q'), KeyModifiers::CONTROL) => {
                 if self.buffer.path.is_none() {
                     self.quit_after_save = true;
@@ -1024,23 +1057,21 @@ impl Editor {
             f.render_widget(
                 HelpBar {
                     shortcuts: vec![
+                        ("Ctrl+H", "Help"),
                         ("Ctrl+O", "Open"),
                         ("Ctrl+S", "Save"),
                         ("Ctrl+F", "Find"),
-                        ("Ctrl+\\", "Replace"),
-                        ("Ctrl+G", "Go to line"),
-                        ("Ctrl+Z", "Undo"),
-                        ("Ctrl+Y", "Redo"),
-                        ("Ctrl+T", "Theme"),
-                        ("Ctrl+W", "Wrap"),
-                        ("Ctrl+B", "Lines"),
-                        ("Ctrl+Q", "Quit"),
                     ],
                     visible: true,
                     theme: self.theme.clone(),
                 },
                 ha,
             );
+        }
+
+        if self.mode == EditorMode::Help {
+            self.render_help(f, a);
+            return;
         }
 
         let ea = Rect::new(a.x, a.y + th, a.width, eh);
@@ -1064,6 +1095,53 @@ impl Editor {
         } else if let EditorMode::GoToLine = &self.mode {
             self.render_input_dialog(f, a, "Go to Line", "");
         }
+    }
+
+    fn render_help(&self, f: &mut ratatui::Frame, area: Rect) {
+        let dw = 60u16;
+        let dh = 20u16;
+        let dx = (area.width.saturating_sub(dw)) / 2;
+        let dy = (area.height.saturating_sub(dh)) / 2;
+        let dr = Rect::new(area.x + dx, area.y + dy, dw, dh);
+
+        let tip = Self::get_random_tip();
+
+        let bp = ratatui::widgets::Block::default()
+            .title(" Help - Press Ctrl+H or ESC to close ")
+            .borders(ratatui::widgets::Borders::ALL)
+            .border_type(ratatui::widgets::BorderType::Double)
+            .style(
+                Style::default()
+                    .bg(self.theme.background)
+                    .fg(self.theme.foreground),
+            );
+        f.render_widget(bp, dr);
+
+        let content = format!(
+            "Key          Action              Key          Action\n\
+             ------------------------------------------------\n\
+             Ctrl+O       Open file           Ctrl+Z       Undo\n\
+             Ctrl+S       Save file           Ctrl+Y       Redo\n\
+             Ctrl+F       Find text           Ctrl+T       Change theme\n\
+             Ctrl+G       Go to line          Ctrl+B       Toggle lines\n\
+             Ctrl+\\       Replace             Ctrl+W       Toggle wrap\n\
+             Ctrl+Q       Quit                Ctrl+H       Help\n\
+             ------------------------------------------------\n\
+             Tip: {}",
+            tip
+        );
+
+        let tr = dr.inner(Margin::new(1, 1));
+        f.render_widget(
+            Paragraph::new(content)
+                .style(
+                    Style::default()
+                        .bg(self.theme.background)
+                        .fg(self.theme.foreground),
+                )
+                .wrap(ratatui::widgets::Wrap { trim: true }),
+            tr,
+        );
     }
 
     fn render_input_dialog(&self, f: &mut ratatui::Frame, area: Rect, title: &str, input: &str) {
