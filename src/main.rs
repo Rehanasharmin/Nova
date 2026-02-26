@@ -1110,15 +1110,18 @@ fn run(initial_file: Option<String>) -> io::Result<()> {
     loop {
         t.draw(|f| e.render(f))?;
 
-        if event::poll(std::time::Duration::from_millis(50))? {
-            if let Event::Key(k) = event::read()? {
-                if k.kind == KeyEventKind::Press {
-                    e.handle_key(&k);
+        if event::poll(std::time::Duration::from_millis(16))? {
+            match event::read() {
+                Ok(Event::Key(k)) => {
+                    if k.kind == KeyEventKind::Press {
+                        e.handle_key(&k);
+                    }
                 }
-            }
-            if let Event::Resize(w, h) = event::read().unwrap_or(Event::Resize(80, 24)) {
-                e.screen_width = w as usize;
-                e.screen_height = h as usize;
+                Ok(Event::Resize(w, h)) => {
+                    e.screen_width = w as usize;
+                    e.screen_height = h as usize;
+                }
+                _ => {}
             }
         }
 

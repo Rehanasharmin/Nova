@@ -70,12 +70,9 @@ impl Widget for EditorView {
             .bg(self.theme.background)
             .fg(self.theme.foreground);
 
+        let clear_str = " ".repeat(inner.width as usize);
         for y in 0..inner.height {
-            for x in 0..inner.width {
-                buf[(inner.x + x, inner.y + y)]
-                    .set_char(' ')
-                    .set_style(clear_style);
-            }
+            buf.set_string(inner.x, inner.y + y, &clear_str, clear_style);
         }
 
         // Render visible lines
